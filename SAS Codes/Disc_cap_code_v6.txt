@@ -1,0 +1,144 @@
+﻿******************************************************************************************;
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+******************************************************************************************;
+
+libname sasdata "/mktg/prcoe/data01/e5065575/eMBP"; /* CHANGE to your own directory */
+
+%macro driver;
+
+%let user1 = "EPRS_APP";
+%let pass = "frdQ0SrFTfqPSP12xmEfUuhkI";
+%let db =  "@ePRS_SVC1_L0";
+%let buf =  2000;
+%let ctry_list= %nrstr('SG','JP','KR','PH','GU'); /* CHANGE */
+%let scl_list= %nrstr('175','100','104','157','82'); /* CHANGE */
+%let nbr_list= 33332; /* CHANGE */
+%let cap_list = %nrstr('M','A');
+%let exp_list = %nrstr(60,70);
+%let imp_list = %nrstr(55,65);
+%let l3p_list = %nrstr(60,70);
+%let g3p_list = %nrstr(60,70);
+%let gro_list = %nrstr(60,70);
+
+
+%if %sysfunc(exist(sasdata.cap_v6)) %then %do;
+				
+					proc delete data = sasdata.cap_v6;
+					
+   				%end;
+
+%do i=1 %to 5; /* CHANGE */
+	%do j=1 %to 2; 
+		
+			%let ctry = %scan(&ctry_list,&i);
+			
+			%let scl = %scan(&scl_list,&i);
+			%let nbr= %substr(&nbr_list,&i,1);
+			%let tbl = tbl&i.&j;
+			%let exp= %scan(&exp_list,&j);
+			%let imp= %scan(&imp_list,&j);
+			%let l3p=%scan(&l3p_list,&j);
+			%let g3p= %scan(&g3p_list,&j);
+			%let gro= %scan(&gro_list,&j);
+			%let cap= %scan(&cap_list,&j);
+			%disc(&ctry,&scl,&tbl,&nbr);
+			
+			
+			%if &i eq 1 and &j eq 1 %then %do;
+			
+			data sasdata.cap_v6;
+			set &tbl;
+			run;
+			
+			%end;
+			
+			%else %do;
+			data sasdata.cap_v6;
+			set sasdata.cap_v6 &tbl;
+			run;
+			%end;
+			
+		%end;
+	%end;
+			
+			
+
+
+%mend;
+
+%macro disc(ctry,scl,tbl,nbr);
+
+proc sql;
+    connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+    create table &tbl as select * from connection to ora 
+    (
+      select 
+d.svc_grp_nm, 
+geo.svc_grp_id, 
+geo.svc_grp_vers_nbr, 
+ab.*,
+case substr(d.svc_grp_nm, 4, 3) 
+when 'Exp' then &exp
+when 'Imp' then &imp
+when 'L3P' then &l3p
+when 'G3P' then &g3p
+when 'Gro' then &gro 
+else 80 
+end as disc_pct 
+
+from 
+
+(select distinct 
+b.svc_sht_nm, 
+b.orig_cntry_cd, 
+b.dest_cntry_cd, 
+a.bds_id_nbr, 
+1 as bds_vers_nbr,
+&cap as wkfl_cd,
+a.CNTRY_DIV_CD,
+a.LTL_PRICING_TYPE_CD,
+a.UNIT_DISC_CD,
+a.IB_IMPORT_flg,
+a.prcng_geo_id_nbr,
+g.prcng_geo_key_long_desc,
+a.RATE_SCALE_GROUP_NBR,
+'' as mwt_tier_nbr,
+a.MIN_WGT,
+a.MAX_WGT
+from eprs_schema.volume_discount_template a, 
+ePRS_SCHEMA.transportation_service b, 
+ePRS_schema.service_group_geo_mbr c, 
+ePRS_SCHEMA.prcng_geo g, 
+( (select * 
+from (select template_set_id as temp2,
+disc_template_id as temp6 
+from template 
+where substr(seg_cd,1,2) = &ctry 
+and substr(template_id, 1,5) in ('FXEVV') /* CHANGE----’FXEVV’ for Exp opco; ’FXGCV’ for Ground opco; ‘FXFVV’ for LTL; */
+order by gen_dt desc, 
+UPPER_ANNUAL_GROSS_REV_AMT DESC) t  
+where rownum<=1) 
+) t 
+where a.bds_id_nbr=b.bds_id_nbr and 
+a.disc_template_ID = t.temp6
+and c.bds_id_nbr=a.bds_id_nbr 
+and c.rqst_type_cd='M' 
+and a.prcng_geo_id_nbr=g.prcng_geo_id_nbr
+order by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) ab
+left join 
+service_group_geo_mbr geo
+on 
+ab.bds_id_nbr=geo.bds_id_nbr and geo.rqst_type_cd='M'
+inner join
+service_group d
+on geo.svc_grp_id=d.svc_grp_id and d.prs_enable_flg='Y' and substr(geo.svc_grp_id,1,length(geo.svc_grp_id)-5) = &scl 
+order by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
+
+    );
+    disconnect from ora;
+    quit;
+
+%mend;
+
+%driver
+

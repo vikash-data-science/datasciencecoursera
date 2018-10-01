@@ -1,0 +1,328 @@
+options nocenter ps=max mlogic mprint symbolgen;
+
+/*From APAC (inbound) fast approval matrix.xls file, filter Type as Import and Destination to country code for which import shipments records are needed. 
+After applying these filters, convert the resultant raw data to SAS dataset and name it "import_data". You may update the SAS dataset name "import_data", 
+but make sure you update the same in this program. Data in "import_data" dataset will be different for different country.*/
+/*All datasets are stored at location mylib*/
+
+%macro import_cap (country_code);
+
+libname mylib_&country_code "/mktg/prcoe/data01/e5065575/Fast_Approval_APAC/&country_code.";
+/*Get import data*/
+proc sql ;
+connect to teradata as ish (user=&ish_user password="&ish_pw" tdpid=edwadhoc.prod.fedex.com 
+                            connection=global mode=teradata);
+
+create table mylib_&country_code..import_intl_shipment as select * from connection to ish
+ (
+SELECT	orig_ctry_cd, dest_ctry_cd, svc_bas_cd, pkg_typ_cd, net_rev_amt, substr(fgt_tbl_nbr, character(fgt_tbl_nbr)+0) as zone_code
+FROM	ui_ish_prod_db.intl_shipment
+where shp_dt_yyyymm between '201411' and '201510'  			/*enter time period as required*/
+and orig_ctry_cd <> %unquote(%str(%')&country_code.%str(%'))				/*enter country code for which import shipments needed ex: MY*/
+and payr_ctry_cd = %unquote(%str(%')&country_code.%str(%'))				/*enter country code for which import shipments needed ex: MY*/
+and dest_ctry_cd = %unquote(%str(%')&country_code.%str(%'))				/*enter country code for which import shipments needed ex: MY*/	
+and substr(fgt_tbl_nbr, character(fgt_tbl_nbr)+0) <> ''
+and substr(fgt_tbl_nbr, 1, 2) = %unquote(%str(%')&country_code.%str(%'))		/*enter country code for which import shipments needed ex: MY*/
+ 
+   );
+ disconnect from ish;
+ quit;
+ 
+ /*Creating dataset for each service - import shipments*/
+
+data mylib_&country_code..import_IE mylib_&country_code..import_IEF mylib_&country_code..import_IP mylib_&country_code..import_IPF mylib_&country_code..import_IPL mylib_&country_code..import_IPPAK temp;
+set mylib_&country_code..import_intl_shipment;
+
+if svc_bas_cd = 4 or svc_bas_cd = 3 then output mylib_&country_code..import_IE;
+else if svc_bas_cd = 86 then output mylib_&country_code..import_IEF;
+else if (svc_bas_cd = 1 AND pkg_typ_cd NE 6 AND pkg_typ_cd NE 2) then output mylib_&country_code..import_IP;
+else if svc_bas_cd = 70 then output mylib_&country_code..import_IPF;
+else if (svc_bas_cd = 1 AND pkg_typ_cd = 6) then output mylib_&country_code..import_IPL;
+else if (svc_bas_cd = 1 AND pkg_typ_cd = 2) then output mylib_&country_code..import_IPPAK;
+else output temp;
+
+run;
+
+
+/* Getting Net revenue for Service by Country*/
+/*import_IE*/
+proc sql ;
+ create table mylib_&country_code..IE_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib_&country_code..import_IE
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IEF*/
+proc sql ;
+ create table mylib_&country_code..IEF_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib_&country_code..import_IEF
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IP*/
+proc sql ;
+ create table mylib_&country_code..IP_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib_&country_code..import_IP
+ group by orig_ctry_cd, zone_code 
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IPF*/
+proc sql ;
+ create table mylib_&country_code..IPF_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib_&country_code..import_IPF
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IPL*/
+proc sql ;
+ create table mylib_&country_code..IPL_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib_&country_code..import_IPL
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IPPAK*/
+proc sql ;
+ create table mylib_&country_code..IPPAK_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib_&country_code..import_IPPAK
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*removing duplicate zone from country list, if any*/
+
+data mylib_&country_code..IE_Country;
+set mylib_&country_code..IE_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib_&country_code..IEF_Country;
+set mylib_&country_code..IEF_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib_&country_code..IP_Country;
+set mylib_&country_code..IP_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib_&country_code..IPF_Country;
+set mylib_&country_code..IPF_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib_&country_code..IPL_Country;
+set mylib_&country_code..IPL_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib_&country_code..IPPAK_Country;
+set mylib_&country_code..IPPAK_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+/*Joining import_data dataset with services data we obtained above. In case if you have updated dataset name "import_data", update the same in below code.*/
+
+proc sql ;
+ create table mylib_&country_code..import_ie_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ie,
+		(id.ie*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib_&country_code..IE_Country ic
+ left join  mylib_&country_code..import_data_&country_code id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ief_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ief,
+		(id.ief*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib_&country_code..IEF_Country ic
+ left join  mylib_&country_code..import_data_&country_code id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ip_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ip,
+		(id.ip*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib_&country_code..IP_Country ic
+ left join  mylib_&country_code..import_data_&country_code id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ipf_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ipf,
+		(id.ipf*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib_&country_code..IPF_Country ic
+ left join  mylib_&country_code..import_data_&country_code id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ipl_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ipl,
+		(id.ipl*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib_&country_code..IPL_Country ic
+ left join  mylib_&country_code..import_data_&country_code id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ippak_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ippak,
+		(id.ippak*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib_&country_code..IPPAK_Country ic
+ left join  mylib_&country_code..import_data_&country_code id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+/*Below set of code will give import discounts for services by zone for country selected. */
+
+proc sql ;
+ create table mylib_&country_code..import_ie_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib_&country_code..import_ie_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ief_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib_&country_code..import_ief_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ip_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib_&country_code..import_ip_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ipf_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib_&country_code..import_ipf_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ipl_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib_&country_code..import_ipl_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib_&country_code..import_ippak_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib_&country_code..import_ippak_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+%mend;
+
+%import_cap (TW);
+%import_cap (CN);
+%import_cap (AU);
+%import_cap (NZ);
+%import_cap (HK);
+%import_cap (MY);
+%import_cap (MO);
+%import_cap (JP);
+%import_cap (KR);
+%import_cap (SG);
+%import_cap (PH);
+%import_cap (GU);
+%import_cap (TH);
+%import_cap (VN);
+%import_cap (ID);

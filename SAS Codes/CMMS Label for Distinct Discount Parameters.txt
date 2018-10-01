@@ -1,0 +1,71 @@
+proc contents data=band out=meta (keep=NAME) ; 
+run ; 
+
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+data meta1;
+	set meta;
+	length varlist $80.;
+	retain varlist;
+	if _n_ > 4 then varlist = catx(" ",varlist,name);
+	call symput('man1',varlist);
+	call symput('rcount',_n_);
+run;
+
+%put &man1;
+%put &rcount;
+
+data meta2;
+	set meta1;
+	if _n_ > 4 then do;
+		call symput('orig_'||left(put(_n_,best.)),strip(name));
+		call symput('new_'||left(put(_n_,best.)),strip(cats("lag_",name)));
+	end;
+run;
+%put &orig_15 &new_15;
+
+proc sort data=work.band out=band1;
+	by &man1.;
+run;
+
+%macro varassign;
+	%global vs vs1;
+	%let vs=;
+	%let vs1=;
+	%do i = 5 %to &rcount;
+		%let init = &&new_&i = lag(&&orig_&i) %str(;);
+		%if &i = 5 %then %let vs1 = &init;
+		%else %do;
+			%let vs = &vs1 &init;
+			%let vs1 = &vs;
+		%end;
+	%end;
+	%put &vs;
+%mend;
+%varassign;
+%macro ifcon;
+	%global ts ts1;
+	%let ts=;
+	%let ts1=;
+	%do i = 5 %to &rcount;
+		%let init = &&new_&i ne &&orig_&i;
+		%if &i = 5 %then %let ts1 = &init;
+		%else %do;
+			%let ts = &ts1 or &init;
+			%let ts1 = &ts;
+		%end;
+	%end;
+	%put &ts;
+%mend;
+%ifcon;
+
+%macro vartext;
+	data new_band2;
+		set band1;
+		retain label;
+		&vs;	
+		if _n_ = 1 then label = 100;
+		else if &ts then label = label + 1;
+	run;
+%mend;
+%vartext;
+	

@@ -1,0 +1,238 @@
+******************************************************************************************;
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+******************************************************************************************;
+%include "/mktg/prcoe/data01/e5065575/APAC_Segmentation/pw_rev.sas";
+libname sasdata "/mktg/prcoe/data01/e5065575/eMBP/surcharge_discount"; /* CHANGE to your own directory */
+
+%let user1 = "EPRS_APP";
+%let pass = "frdQ0SrFTfqPSP12xmEfUuhkI";
+%let db =  "@ePRS_SVC1_L1";
+%let buf =  2000;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.prs_surcharge as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.prs_surcharge
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.eprs_country as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.country
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.eprs_country_currency as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.country_currency
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	create table sasdata.region_input as
+	select
+			a.*,
+			b.CNTRY_RATE_SCALE_SERIAL_NBR as ctry_num,
+			c.CURR_CD as curr_cd
+	from work.region_input a, sasdata.eprs_country b, sasdata.eprs_country_currency c
+	where b.cntry_cd = a.country and c.cntry_cd = a.country;
+quit;
+
+%macro fetch_sdtemplate(country,export,import,inbound,L3P,G3P,Domestic,srchg_name,r_count,ctry_num,curr_cd);
+	
+	/*** Declare values for macro variables ***/
+	%let reco = 0;
+	%let aemax = 0;
+	%let mgrmax = 100;
+	%let autopnl = 100;
+	%let pct_amt_flag = "P";
+	%let expdt = "";
+	%let expmonth = 24;
+	%let srchg_actn = "Percent Decrease";
+	%let srchg_expr = "EXPPricing";
+	%let modify_dt = "3/31/2016";
+	
+	/*** Get list of applicable sub service groups ***/
+	%if &export = Y %then %let service1 = "Export";
+		%else %let service1 = "Null";
+	%if &import = Y %then %let service2 = "Import";
+		%else %let service2 = "Null";
+	%if &inbound = Y %then %let service3 = "Import";
+		%else %let service3 = "Null";
+	%if &L3P = Y %then %let service4 = "L3P";
+		%else %let service4 = "Null";
+	%if &G3P = Y %then %let service5 = "G3P";
+		%else %let service5 = "Null";
+	%if &Domestic = Y %then %let service6 = "IC";
+		%else %let service6 = "Null";
+	%let service7 = "IPD";
+	%let service8 = "IED";
+	%let service9 = "IDF";
+		
+	proc sql;
+		connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+		create table subsvc_grp_list as select * from connection to ora
+		(
+			select 	svc_grp_id,
+					svc_grp_vers_nbr,
+					svc_grp_nm,
+					svc_grp_type_cd,
+					rqst_type_cd
+			from ePRS_SCHEMA.service_group
+			where substr(svc_grp_id,1,length(svc_grp_id)-5) = %unquote(%str(%')&ctry_num.%str(%'))
+		);
+		disconnect from ora;
+	quit;
+	
+	data sasdata.subsvc_grp_list;
+		set subsvc_grp_list;
+		where svc_grp_type_cd="SSG"
+			and (rqst_type_cd='M' or rqst_type_cd='B')
+			and (index(svc_grp_nm,&service1) > 0 or index(svc_grp_nm,&service2) > 0 or index(svc_grp_nm,&service3) > 0
+				or index(svc_grp_nm,&service4) > 0 or index(svc_grp_nm,&service5) > 0 or index(svc_grp_nm,&service6) > 0)
+			and (index(svc_grp_nm,&service7) eq 0 and index(svc_grp_nm,&service8) eq 0 and index(svc_grp_nm,&service9) eq 0);
+	run;
+			
+	/*** map rate scale group with sub service group ***/
+	data sd_temp1;
+		set sasdata.subsvc_grp_list;
+		if (index(svc_grp_nm,&service1)) > 0 then service = &service1;
+		else if (index(svc_grp_nm,&service2)) > 0 then service = &service2;
+		else if (index(svc_grp_nm,&service3)) > 0 then service = &service3;
+		else if (index(svc_grp_nm,&service4)) > 0 then service = &service4;
+		else if (index(svc_grp_nm,&service5)) > 0 then service = &service5;
+		else if (index(svc_grp_nm,&service6)) > 0 then service = &service6;
+	run;
+	
+	proc sql;
+		connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+		create table rs_temp1 as select * from connection to ora
+		(
+			select 	rate_scale_group_nbr,
+					rate_scale_group_nm
+			from ePRS_SCHEMA.rate_scale_group
+			where substr(rate_scale_group_nm,1,2) = %unquote(%str(%')&country.%str(%'))
+		);
+		disconnect from ora;
+	quit;		
+
+	data sasdata.rs_temp1;
+		set rs_temp1;
+		where index(rate_scale_group_nm,upcase(&service1)) > 0 or index(rate_scale_group_nm,upcase(&service2)) > 0
+		   or index(rate_scale_group_nm,upcase(&service5)) > 0 or index(rate_scale_group_nm,"INTRA COUNTRY") > 0;
+	run;
+	
+	%if &inbound = Y %then %let service3 = "Inbound";
+	%else %let service3 = "Null";
+
+	data rs_temp2;
+		set sasdata.rs_temp1;
+		if index(rate_scale_group_nm,upcase(&service1)) > 0 then service = &service1;
+		else if index(rate_scale_group_nm,upcase(&service2)) > 0 then service = &service2;
+		else if index(rate_scale_group_nm,upcase(&service3)) > 0 then service = &service3;
+		else if index(rate_scale_group_nm,upcase(&service4)) > 0 then service = &service4;
+		else if index(rate_scale_group_nm,upcase(&service5)) > 0 then service = &service5;
+		else if index(rate_scale_group_nm,"INTRA COUNTRY") > 0 then service = &service6;
+	run;
+
+	proc sql;
+		create table sd_temp2 as
+		select 	a.*,
+				b.rate_scale_group_nbr
+		from sd_temp1 a left join rs_temp2 b
+		on a.service = b.service;
+	quit;
+	
+	data sd_temp3;
+		set sd_temp2;
+		if rate_scale_group_nbr = '' then rate_scale_group_nbr = 'D';
+	run;
+	
+	/*** Extract the list of surcharge group ids ***/
+	proc sql;
+		connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+		create table srchg_list as select * from connection to ora 
+		(
+			select srchg_grp_id,
+				   SRCHG_VERS_NBR,
+				   srchg_id 
+			from surcharge_group_mbr
+			where substr(srchg_grp_id,length(srchg_grp_id),1)='1'
+			and substr(srchg_grp_id,1,length(srchg_grp_id)-5) = %unquote(%str(%')&ctry_num.%str(%'))
+		);
+		disconnect from ora;
+	quit;
+
+	proc sql;
+		create table sasdata.srchg_list as 
+		select srchg_grp_id,
+			   SRCHG_VERS_NBR 
+		from srchg_list
+		where srchg_id in 
+		(select srchg_id from sasdata.prs_surcharge where srchg_nm=&srchg_name);
+	quit;				
+		
+	/*** Prepare the surcharge discount template ***/
+	proc sql;
+		create table sdtemplate1_&country as
+		select 
+			cat("&country.","EXPSRG01") as TEMPLATE_ID,
+			a.srchg_grp_id as SRCHG_GRP_ID,
+			a.SRCHG_VERS_NBR as SRCHG_VERS_NBR,
+			b.svc_grp_id as SVC_GRP_ID,
+			b.svc_grp_vers_nbr as SVC_GRP_VERS_NBR,
+			"" as BDS_ID_NBR,
+			"" as BDS_VERS_NBR,
+			"" as PRCNG_GEO_ID_NBR,
+			0 as TIER_MIN_AMT,
+			0 as TIER_MAX_AMT,
+			999999 as PRCNG_GEO_GRP_ID,
+			"&CURR_CD." as CURR_CD,
+			&reco as RECMD_DISC_NBR,
+			&aemax as AE_MAX_DISC_NBR,
+			&mgrmax as MGR_MAX_DISC_NBR,
+			&autopnl as AUTO_PROFIT_LOSS_NBR,
+			&pct_amt_flag as PCT_AMT_FLG,
+			b.rate_scale_group_nbr as RATE_SCALE_GROUP_NBR,
+			&expdt as EXPR_DT,
+			&expmonth as EXPR_MONTH_NBR,
+			&srchg_actn as SRCHG_ACTN_TYPE_CD,
+			&srchg_expr as SRCHG_EXPR_ACTN_CD,
+			&modify_dt as MODFY_DT
+		from sasdata.srchg_list a, sd_temp3 b;
+	quit;
+	
+	%if &r_count = 1 %then %do;
+		data sdtemplate2_agg;
+			set sdtemplate1_&country;
+		run;
+	%end;
+	%else %do;
+		data sdtemplate2_agg;
+			set sdtemplate2_agg sdtemplate1_&country;
+		run;
+	%end;
+	
+%mend;
+	
+data sasdata.region_input;
+	set sasdata.region_input;
+	r_count = _n_;
+	call execute ('%fetch_sdtemplate('||country||','||export||','||import||','||inbound||','||L3P||','||G3P||','||Domestic||',"Declared Value",'||r_count||','||ctry_num||','||curr_cd||')');
+run;
+
+proc sql;
+	create table sasdata.sd_template as
+	select 
+			monotonic() as SRCHG_DISCOUNT_TEMPLATE_ID,
+			*
+	from sdtemplate2_agg;
+quit;

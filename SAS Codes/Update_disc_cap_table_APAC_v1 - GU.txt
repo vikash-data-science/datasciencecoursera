@@ -1,0 +1,138 @@
+******************************************************************************************;
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+******************************************************************************************;
+
+libname sasdata "/mktg/prcoe/data01/e5065575/eMBP/discount_cap/"; /* CHANGE to your own directory */
+
+data sasdata.country_list;
+	set country_list;
+run;
+
+%macro cp_file(ctry);
+	libname saspath "/mktg/prcoe/data01/e5065575/eMBP/discount_cap/&ctry.";
+	data saspath.region_input_m_&ctry.;
+		set region_input_m_&ctry.;
+	run;
+	data saspath.region_input_a_&ctry.;
+		set region_input_a_&ctry.;
+	run;
+%mend;
+
+data sasdata.country_list;
+	set sasdata.country_list;
+	call execute ('%cp_file('||country||')');
+run;
+
+data sasdata.disc_cap_ip;
+	set "/mktg/prcoe/data01/e5065575/eMBP/cap_v7.sas7bdat";
+run;
+
+data sasdata.disc_cap_prep;
+	set sasdata.disc_cap_ip;
+	
+	ctry = substr(svc_grp_nm,1,2);
+	zone = substr(prcng_geo_key_long_desc,length(prcng_geo_key_long_desc),1);
+	
+	length prod $8;
+	if index(svc_grp_nm," Export ") > 0 then service = "EXPT";
+	else if index(svc_grp_nm," Import ") > 0 then do;
+			if ib_import_flg = 'N' then service = "INBD";
+			else service = "IMPT";
+		end;
+	else if index(svc_grp_nm," G3P ") > 0 then service = "G3P";
+	else if index(svc_grp_nm," L3P ") > 0 then service = "L3P";
+
+	if index(svc_sht_nm,"IEF") > 0 then prod = "IEF";
+	else if index(svc_sht_nm,"IPF") > 0 then prod = "IPF";
+	else if index(svc_sht_nm,"IE") > 0 then do;
+			if min_wgt = 1 then prod = "IE1";
+			else if min_wgt = 2 then prod = "IE2";
+			else if min_wgt = 155 then prod = "IEHW";
+		end;
+	else if index(svc_sht_nm,"Letter") > 0 then do;
+			if index(svc_sht_nm,"IP") > 0 then prod = "IPL";
+		end;
+	else if index(svc_sht_nm,"Pak") > 0 then do;
+			if index(svc_sht_nm,"IP") > 0 then prod = "IPPAK";
+		end;
+	else if index(svc_sht_nm,"IP") > 0 then do;
+			if min_wgt = 1 then prod = "IP1";
+			else if min_wgt = 2 then prod = "IP2";
+			if min_wgt = 155 then prod = "IPHW";
+		end;
+run;
+
+data sasdata.disc_cap_prep_m sasdata.disc_cap_prep_a;
+	set sasdata.disc_cap_prep;
+	if wkfl_cd = "M" then output sasdata.disc_cap_prep_m;
+	else if wkfl_cd = "A" then output sasdata.disc_cap_prep_a;
+run;
+
+%macro fill_values(cntry,wkfl);
+	proc sort data=ip_&ctry..region_input_&wkfl._&cntry ;
+		by rate_scale_group_nbr service zone;
+	run;
+
+	proc transpose data = ip_&ctry..region_input_&wkfl._&cntry 
+		out = ip_prep_&wkfl._&cntry.1(rename=(_name_=prod col1=cap_value));
+		by rate_scale_group_nbr service zone;
+	run;
+	
+	data ip_&ctry..input_prep_&wkfl._&cntry ;
+		set ip_prep_&wkfl._&cntry.1;
+	run;
+	
+	data ip_ds1;
+		set sasdata.disc_cap_prep_&wkfl ;
+		where substr(svc_grp_nm,1,2) = %unquote(%str(%')&ctry.%str(%'));
+	run;
+	
+	proc sql;
+		create table op_ds1 as
+		select 
+				a.*,
+				b.cap_value
+		from ip_ds1 a left join ip_&ctry..input_prep_&wkfl._&cntry b
+		on a.service = b.service
+		and a.zone = b.zone
+		and a.prod = b.prod
+		and a.RATE_SCALE_GROUP_NBR = b.RATE_SCALE_GROUP_NBR;	
+	quit;
+	
+	data op_ds2_&wkfl.(drop=ctry zone service prod);
+		set op_ds1 (drop=disc_pct);
+		if cap_value eq . then cap_value=0;
+		rename cap_value=disc_pct;
+		modify_dt = "11-July-2016";
+	run;
+%mend;
+
+%macro update_disc(ctry,r_count);
+	
+	libname ip_&ctry "/mktg/prcoe/data01/e5065575/eMBP/discount_cap/&ctry.";
+	
+	%fill_values(&ctry.,M);
+	%fill_values(&ctry.,A);
+		
+	data ip_&ctry..output_&ctry;
+		set op_ds2_m op_ds2_a;
+	run;
+	
+	%if &r_count = 1 %then %do;
+		data sasdata.disc_cap_table;
+			set ip_&ctry..output_&ctry;
+		run;
+	%end;
+	%else %do;
+		data sasdata.disc_cap_table;
+			set sasdata.disc_cap_table ip_&ctry..output_&ctry;
+		run;
+	%end;
+	
+%mend;
+	
+data sasdata.country_list;
+	set sasdata.country_list;
+	r_count = _n_;
+	call execute ('%update_disc('||country||','||r_count||')');
+run;

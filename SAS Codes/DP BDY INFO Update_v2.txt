@@ -1,0 +1,146 @@
+/*libname sasdata "/mktg/prcoe/data01/e5065575/iPFS/DP_Update"; /* CHANGE to your own directory */
+
+%let user1 = "EPRS_APP";
+%let pass = "frdQ0SrFTfqPSP12xmEfUuhkI";
+%let db =  "@ePRS_SVC1_L1B";
+%let buf =  2000;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table svc1 as select * from connection to ora
+	(
+		select 	distinct svc_grp_id,
+				svc_grp_vers_nbr,
+				svc_grp_nm,
+				svc_grp_type_cd,
+				rqst_type_cd
+		from ePRS_SCHEMA.service_group
+		where substr(svc_grp_id,1,length(svc_grp_id)-3) in (20512,20513) /* CHANGE */
+		and rqst_type_cd = 'M'
+		and svc_grp_type_cd = 'SSG'
+	);
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table abc1 as select * from connection to ora 
+	(
+		select distinct substr(a.svc_grp_id,1,length(a.svc_grp_id)-3)*1000 as svc_grp,
+				a.rate_scale_group_nbr,
+				x.rate_Scale_group_display_nm from 
+					(select distinct a.svc_grp_id,
+							b.rate_scale_group_nbr  
+					from eprs_schema.service_group a left outer join eprs_schema.service_grp_rte_scale_grp b on 
+					substr(a.svc_grp_id,1,length(a.svc_grp_id)-2)=substr(b.svc_grp_id,1,length(b.svc_grp_id)-2)
+					where a.rqst_type_cd='M') a, 
+					eprs_schema.rate_scale_group x 
+		where a.rate_scale_group_nbr=x.rate_scale_group_nbr and x.rqst_type_cd='B' 
+		and substr(a.svc_grp_id,1,length(a.svc_grp_id)-3) in ('20512','20513')  /* CHANGE */
+		and x.rate_Scale_group_display_nm like '%1867%'
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table abc2 as select * from connection to ora 
+	(
+		select distinct substr(c.svc_grp_id,1,length(c.svc_grp_id)-3)*1000 as svc_grp,
+				a.prcng_geo_grp_id,
+				b.prcng_geo_key_desc,
+				c.rate_scale_group_nbr from 
+				eprs_schema.prcng_geo_group_mbr a 
+				inner join eprs_schema.prcng_geo b 
+					on a.prcng_geo_id_nbr=b.prcng_geo_id_nbr 
+				inner join eprs_schema.service_group_attr c
+					on a.prcng_geo_grp_id=c.prcng_geo_grp_id
+				inner join eprs_schema.service_group d
+					on d.svc_grp_id=c.svc_grp_id
+				where b.prcng_geo_type_nm='ZONE' 
+				and d.rqst_type_cd='M' and substr(c.svc_grp_id,1,length(c.svc_grp_id)-3)*1000 in (20512000,20513000)  /* CHANGE */
+		order by 1,2
+
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table abc3 as select * from connection to ora 
+	(
+		select * from svc_grp_mbr_wgt_brk 
+		where substr(svc_grp_id,1,length(svc_grp_id)-3) in (20512,20513)  /* CHANGE */
+		and wkfl_cd='D'
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	create table abc4 as 
+		select a.svc_grp, 
+				a.rate_scale_group_nbr,
+				b.prcng_geo_grp_id
+		from abc1 a 
+		left join abc2 b
+			on a.svc_grp = b.svc_grp and 
+			a.rate_scale_group_nbr=b.rate_scale_group_nbr;
+quit; 
+
+proc sql;
+	create table abc5 as 
+		select a.svc_grp, 
+				b.svc_grp_id,
+				a.rate_scale_group_nbr,
+				a.prcng_geo_grp_id,
+				b.wgt_brk_set_id,
+				substr(strip(put(a.svc_grp,best.)),1,5),
+				substr(strip(put(b.svc_grp_id,best.)),1,5)
+		from abc4 a 
+		left join abc3 b
+		on	substr(strip(put(a.svc_grp,best.)),1,5) = substr(strip(put(b.svc_grp_id,best.)),1,5);
+			/*and a.prcng_geo_grp_id = b.prcng_geo_grp_id;*/
+quit;
+
+data abc6;
+	set abc5 (keep=svc_grp_id rate_scale_group_nbr prcng_geo_grp_id wgt_brk_set_id);
+run;
+
+proc sort data=abc6 out=abc7 nodupkey;
+	by svc_grp_id rate_scale_group_nbr prcng_geo_grp_id wgt_brk_set_id;
+run;
+
+proc sql;
+create table abc8 as
+select a.svc_grp_id, b.*
+from svc1 a left join abc7 b
+on a.svc_grp_id = b.svc_grp_id;
+quit;
+ 
+proc sql;
+create table abc9 as
+select a.svc_grp_id,
+	b.rate_scale_group_nbr,
+	a.prcng_geo_grp_id,
+	a.wgt_brk_set_id
+	from abc8 a
+	left join abc1 b
+	on	substr(strip(put(a.svc_grp_id,best.)),1,5) = substr(strip(put(b.svc_grp,best.)),1,5)
+	order by 1,2,3,4;
+quit;
+
+data abc10;
+	set abc9;
+	if prcng_geo_grp_id = . then prcng_geo_grp_id = 999999;
+	if wgt_brk_set_id = . then wgt_brk_set_id = 999;
+	SVC_GRP_VERS_NBR = 1;
+	MIN_FACTOR_NBR = 0.5;
+	MAX_FACTOR_NBR = 1.5;
+	PKG_YIELD_NBR = 0;
+	SHPMT_YIELD_NBR = 0;
+	PALLET_YIELD_NBR = 0;
+	EFF_DT = "22-Aug-18";
+	EXPR_DT = "31-Dec-70";
+	MODFY_FEDEX_ID_NBR = 3617265;
+	MODFY_DT = "20-Sep-18";
+run;

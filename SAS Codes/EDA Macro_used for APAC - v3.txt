@@ -1,0 +1,400 @@
+options nocenter ps=max mlogic mprint symbolgen;
+
+%macro eda_module(country);
+	libname data_&country "/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data/EDA";
+	libname data1_&country "/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data";
+
+	%macro main_driver;
+		/* this is for plotting number of proposals per month */	
+		proc sql;
+			create table proposal_clean1 as 
+			select 
+			proposal_date as proposal_date format=date9.,
+			count(distinct proposal_nbr) as num_of_proposals
+			from data_&country..final_proposal_&country
+			group by 1
+			order by 1;
+		quit; 
+
+		/* This is for finding gross revenue outlier value */	
+		proc sql;
+			create table rev_plot1 as
+			select proposal_nbr,
+					sum(post_gross_rev_amt) as post_gross_rev,
+					sum(base_gross_rev_amt) as base_gross_rev
+			from data_&country..final_proposal_&country
+			group by 1
+			order by 1;
+		quit;
+			
+		/* pick outlier data at p95 and assigning outlier values to macro variables */
+		proc univariate data=rev_plot1 outtable=rev_plot2 noprint;
+			var base_gross_rev post_gross_rev;
+		run;
+
+		proc transpose data=rev_plot2 out=rev_plot3;
+			id _var_;
+		run; 
+
+		data _null_;
+			set rev_plot3;
+			if _name_ = "_P95_" then do;
+				call symputx("base", base_gross_rev);
+				call symputx("post", post_gross_rev);
+			end;
+		run;
+		
+		%put &base;
+		%put &post; 
+
+		/* tagging outlier proposals */
+		data data_&country..outlier_plot;
+			set rev_plot1;
+			if base_gross_rev < &post and post_gross_rev < &post and not (base_gross_rev = 0 = post_gross_rev) then outlier_flag = "N";
+			else outlier_flag ="Y";
+		run;
+		
+		/* final_proposal dataset without outliers */
+		proc sql;
+			create table data_&country..final_proposal_clean as
+			select a.*,
+					b.outlier_flag
+			from data_&country..final_proposal_&country a,
+				  data_&country..outlier_plot b
+			where a.proposal_nbr=b.proposal_nbr and
+				   b.outlier_flag = 'N';
+		quit;
+			
+		/* compare proposal count with and without outliers */
+		proc sql;
+			create table proposal_clean2 as 
+			select 
+			proposal_date as proposal_date format=date9.,
+			count(distinct proposal_nbr) as num_of_proposals
+			from data_&country..final_proposal_clean
+			group by 1
+			order by 1;
+		quit; 
+		
+		proc sql;
+			create table data_&country..proposal_clean_summary as 
+			select 
+			a.*,
+			b.num_of_proposals as proposals_without_outliers
+			from proposal_clean1 a left join proposal_clean2 b
+			on a.proposal_date = b.proposal_date;
+		quit; 
+		
+		/* tagging customer attributes to final_proposal_clean*/
+		proc sql;
+			create table proposal_sum as
+			select distinct
+				proposal_nbr,
+				cust_nbr,
+				proposal_date as proposal_date format=date9.
+			from data_&country..final_proposal_clean;
+		quit;
+		
+		proc sql;
+			create table data_&country..proposal_all as
+			select p.*,
+				coalesce(cp.cpra_cd,'X') as cpra_cd,
+				coalesce(ca.acct_create_dt,0) as acct_create_dt format=date9.,
+				coalesce(ca.reg_stop_flg,'N') as reg_stop_flg,
+				coalesce(ca.auto_aff,'X') as auto_aff,
+				coalesce(ca.tender_aff,'Unknown') as tender_aff,
+				coalesce(sic.sic_desc,'NULL') as sic_code
+			from proposal_sum p
+			left join data1_&country..cpra_total cp
+			on p.cust_nbr = cp.fedex_acct_nbr
+			left join data1_&country..customer_attrib ca
+			on p.cust_nbr = ca.cust_nbr
+			left join data1_&country..sic_code sic
+			on p.cust_nbr = sic.cust_nbr;
+		quit;
+		
+		/* adding age of account attribute */
+		data data_&country..proposal_all;
+			set data_&country..proposal_all;
+			acct_age_mth = intck('MONTH',acct_create_dt,proposal_date);
+			
+			length age_mth $30;
+			if acct_age_mth<=1 then age_mth="<=1 Month";
+			else if acct_age_mth<=3 then age_mth="1-3 Months";
+			else if acct_age_mth<=6 then age_mth="3-6 Months";
+			else if acct_age_mth<=12 then age_mth="6-12 Months";
+                	else if acct_age_mth<=18 then age_mth="12-18 Months";
+                	else if acct_age_mth<=24 then age_mth="18-24 Months";
+			else if acct_age_mth<=30 then age_mth="24-30 Months";
+                	else age_mth=">30 Months";
+		run;
+			
+		/* adding recency and frequency attribute */
+		proc sql;
+			create table base as select
+				b.proposal_nbr,
+				min(b.post_shp_recency) as recency,
+				max(b.post_shp_freq) as frequency
+			from data_&country..final_proposal_clean b
+            		group by 1
+			order by 1;
+        	quit;
+
+        	data data_&country..proposal_rf;
+			set base;
+         
+			length recency_flg $30; 
+			if recency<=30 then recency_flg="<= 1 Month";
+			else if recency<=182 then recency_flg="1-6 Months";
+			else recency_flg=">6 Months";
+			
+			length frequency_flg $30;
+			if frequency<=1 then frequency_flg="<=1";
+			else if frequency<=2 then frequency_flg="1-2";
+			else if frequency<=3 then frequency_flg="2-3";
+			else frequency_flg=">3";		
+		run;
+
+		/* Dominant Region Module */
+		******************************************************************************************;
+
+		******************************************************************************************;
+		* MACRO DRIVER                                                                            ;
+		******************************************************************************************;
+		%macro driver;
+				%inpt_parameter;
+				%map;
+		%mend;
+		******************************************************************************************;
+
+		******************************************************************************************;
+		* MACRO INPT_PARAMETER                                                                    ;
+		******************************************************************************************;
+		%macro inpt_parameter;
+				data data_&country..&country._map;
+						infile "/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data/EDA/&country._map.txt" dlm=',';
+						length ctry_name $3 svc $3  zone $1 region $4;
+						input ctry_name $ svc $ scale zone $ region $;		
+		%mend;
+
+		*********************************************************************************************;
+		* MACRO MAP                                                                                  ;
+		*********************************************************************************************;
+		%macro map;
+				
+			proc sql;
+			create table base as select
+			b.proposal_nbr,
+			a.region,
+			sum(b.base_gross_rev_amt) as region_gross_rev
+			from data_&country..&country._map a,
+			     data_&country..final_proposal_&country b
+			where 
+			a.ctry_name=b.ctry_name
+			and a.scale=b.scale 
+			and a.zone=b.zone 
+			and upper(substr(b.service_sub_grouping_cd,4,3))= upper(a.svc) 
+			group by 1,2
+			order by 1,2;
+			quit;
+			
+			proc sql;
+			create table base1 as select
+			b.proposal_nbr,
+			sum(b.base_gross_rev_amt) as gross_rev
+			from 
+				data_&country..final_proposal_&country b
+			group by 1
+			order by 1;
+			quit;
+
+			data total;
+			merge base (in=ok1) base1(in=ok2);
+			by proposal_nbr ;
+			if ok1 and ok2;
+			if gross_rev=0 then dominant='None';
+			else if region_gross_rev/gross_rev>=0.5 then dominant=region;
+			else dominant='X';
+			run;
+						
+			proc sort data=total nodupkey;
+			by proposal_nbr ;
+
+			data data_&country..domin_region;
+				set total;
+			run;
+
+		%mend;
+		%driver;
+			
+		/* Generate EDA output tables and files */
+		%macro get_output(ip_dataset,op_file,variable);
+			proc freq data = data_&country..&ip_dataset noprint;
+				tables &variable./out=&op_file.;
+
+			proc sort data = &op_file out=data_&country..&op_file.;
+				by &variable percent;
+				format percent 10.1;
+
+			data _null_;
+				set data_&country..&op_file.;
+				file "/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data/EDA/&op_file..csv" dlm = ','; 
+				format percent percent10.1;
+				percent = percent/100;
+				put &variable $ count percent;
+			run;
+			
+			ods tagsets.ExcelXP options(sheet_name="&variable.");
+			proc print data=data_&country..&op_file label noobs style(Header)=[just=center];
+				var &variable count percent;
+				label 	&variable="&variable"
+						count="Count of Proposals"
+						percent="% of Proposals";	
+			run;
+			quit;
+		%mend;
+		
+		ods tagsets.ExcelXP path="/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data/EDA" file="EDA_Output_&country..xml";
+		quit;
+		%get_output(proposal_all,cpra_cd_result,cpra_cd);
+		%get_output(proposal_all,reg_stop_flg_result,reg_stop_flg);
+		%get_output(proposal_all,auto_aff_result,auto_aff);
+		%get_output(proposal_all,tender_aff_result,tender_aff);
+		%get_output(proposal_all,age_result,age_mth);
+		%get_output(proposal_rf,r_result,recency_flg);
+		%get_output(proposal_rf,f_result,frequency_flg);
+		%get_output(domin_region,dominant_result,dominant);		
+
+		/* Service Group Analysis */
+		%macro svc_grp_analysis (input_path,output_path,scheme_no);
+
+			libname ip_path &input_path;
+			libname op_path &output_path;	
+
+			data op_path.seg1_scheme&scheme_no;
+				set ip_path.final_proposal_clean (keep=proposal_nbr service_sub_grouping_cd);
+				length comb1 $200;
+				
+				%if &scheme_no = 1 %then %do;
+					if index(service_sub_grouping_cd,'EXP') > 0 then comb1 = 'EXP';
+					else if index(service_sub_grouping_cd,'IMP') > 0 THEN comb1 = 'IMP';
+					else if index(service_sub_grouping_cd,'3P') > 0 THEN comb1 = '3P';
+					else comb1 = 'Others';
+				%end;
+
+				%else %if &scheme_no = 2 %then %do;
+					if index(service_sub_grouping_cd,'ENV') > 0 then comb1 = 'Ltr';
+					
+					else if index(service_sub_grouping_cd,'EXP_P') > 0 or 
+						index(service_sub_grouping_cd,'IMP_P') > 0 or 
+						index(service_sub_grouping_cd,'3P_P') then comb1 = 'NL_P';
+
+					else if index(service_sub_grouping_cd,'EXP_D') > 0 or
+						index(service_sub_grouping_cd,'EXP_F') > 0 or
+						index(service_sub_grouping_cd,'IMP_D') > 0 or
+						index(service_sub_grouping_cd,'IMP_F') > 0 or
+						index(service_sub_grouping_cd,'3P_D') > 0 or
+						index(service_sub_grouping_cd,'3P_F') then comb1 = 'NL_E';
+
+					else comb1 = 'Others';
+				%end;					
+			run;
+
+			proc sql;
+				create table op_path.seg2_scheme&scheme_no as 
+				select distinct 
+					proposal_nbr,
+					comb1
+				from op_path.seg1_scheme&scheme_no;
+			quit;
+
+			data op_path.seg3_scheme&scheme_no;
+				set op_path.seg2_scheme&scheme_no;
+				by proposal_nbr;
+				
+				length comb2 $200;
+				retain comb2;
+				if first.proposal_nbr then comb2=comb1;
+				else if comb1 ne 'Others' then comb2=cats(comb2,'^',comb1);
+				output;
+			run;
+
+			data op_path.seg4_scheme&scheme_no;
+				set op_path.seg3_scheme&scheme_no;
+				by proposal_nbr;
+				if last.proposal_nbr;
+			run;
+
+			proc sql;
+				create table op_path.final_proposal_clean_sum as
+				select 
+					proposal_nbr,
+					sum(post_volumn) as post_vol,
+					sum(post_gross_rev_amt) as post_gross
+				from op_path.final_proposal_clean
+				group by 1
+				order by 1;
+			quit;
+									
+			proc sql;
+				create table op_path.proposal_all_rev_scheme&scheme_no as
+				select a.*, b.comb2
+				from op_path.final_proposal_clean_sum a left join op_path.seg4_scheme&scheme_no b
+				on a.proposal_nbr = b.proposal_nbr;
+			quit; 
+
+			proc sql;
+				create table op_path.analysis_valsum_scheme&scheme_no as
+				select 
+					comb2,
+					count(distinct proposal_nbr) as no_proposals,
+					sum(post_vol) as volume,
+					sum(post_gross) as gross_revenue
+				from op_path.proposal_all_rev_scheme&scheme_no
+				group by 1
+				order by 1;
+			quit;
+
+			proc sql;
+				create table op_path.analysis_pctsum_scheme&scheme_no as
+				select 
+					comb2 as ssg,
+					100*gross_revenue/sum(gross_revenue) as rev_pct format=6.2,
+					100*volume/sum(volume) as vol_pct format=6.2,
+					no_proposals/6 as proposals_per_month format=6.2
+				from op_path.analysis_valsum_scheme&scheme_no
+				order by 3 descending;
+			quit;
+			
+			proc sql;
+				create table op_path.analysis_pctsum_scheme&scheme_no as
+				select 
+					monotonic() as ssg_no,
+					*
+				from op_path.analysis_pctsum_scheme&scheme_no;
+			quit;	
+
+			ods tagsets.ExcelXP options(sheet_name="Scheme &scheme_no");
+				proc print data=op_path.analysis_pctsum_scheme&scheme_no label noobs style(Header)=[just=center];
+					var ssg_no / style=[just=center];
+					var ssg rev_pct vol_pct proposals_per_month;
+					label 	ssg_no='# of SSG'
+							ssg='SSG Selected'
+							rev_pct='Rev%'
+							vol_pct='Vol%'
+							proposals_per_month='Proposals/Month';			
+				run;
+			quit;
+		%mend;
+
+		%do i = 1 %to 2;
+		%svc_grp_analysis("/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data/EDA","/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data/EDA",&i.);
+		%end;
+				
+	%mend;
+	%main_driver;
+			
+%mend;
+
+%eda_module(JP);		
+

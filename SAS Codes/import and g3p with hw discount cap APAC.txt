@@ -1,0 +1,810 @@
+
+/*From APAC (inbound) fast approval matrix.xls file, filter Type as Import and Destination to country code for which import shipments records are needed. After applying these filters, convert the resultant raw data to SAS dataset and name it "import_data". You may update the SAS dataset name "import_data", but make sure you update the same in this program. Data in "import_data" dataset will be different for different country.*/
+/*All datasets are stored at location mylib*/
+
+libname mylib 'path_here';
+
+
+/*Get import data*/
+proc sql ;
+connect to teradata as ish ( user="&ish_user" password="&ish_pw" tdpid='edwapps.prod.fedex.com' );
+
+ create table mylib.import_intl_shipment as select * from connection to ish
+ (
+SELECT	orig_ctry_cd, dest_ctry_cd, svc_bas_cd, pkg_typ_cd, net_rev_amt, substr(fgt_tbl_nbr, character(fgt_tbl_nbr)+0) as zone_code, shp_wgt, shp_wgt_um_cd
+FROM	ui_ish_prod_db.intl_shipment
+where shp_dt_yyyymm between '201411' and '201510'  			/*enter time period as required*/
+and orig_ctry_cd <> 'country_code'							/*enter country code for which import shipments needed ex: MY*/
+and payr_ctry_cd = 'country_code'							/*enter country code for which import shipments needed ex: MY*/
+and dest_ctry_cd = 'country_code'							/*enter country code for which import shipments needed ex: MY*/	
+and substr(fgt_tbl_nbr, character(fgt_tbl_nbr)+0) <> ''
+and substr(fgt_tbl_nbr, 1, 2) = 'country_code'				/*enter country code for which import shipments needed ex: MY*/
+
+ 
+   );
+ disconnect from ish;
+ 
+ /*Assumption - shipments with weight above 155 for LB. 71 for KG are considered HW for IE and IP */
+ /*Creating dataset for each service - import shipments*/
+
+data mylib.import_IE mylib.import_IEHW mylib.import_IEF mylib.import_IP mylib.import_IPHW mylib.import_IPF mylib.import_IPL mylib.import_IPPAK temp;
+set mylib.import_intl_shipment;
+
+if svc_bas_cd = 4 or svc_bas_cd = 3 and ((shp_wgt_um_cd = 'K' and shp_wgt < 71) or (shp_wgt_um_cd = 'P' and shp_wgt < 155))
+    then output mylib.import_IE;
+else if svc_bas_cd = 4 or svc_bas_cd = 3 and ((shp_wgt_um_cd = 'K' and shp_wgt > 70) or (shp_wgt_um_cd = 'P' and shp_wgt > 154)) 
+	then output mylib.import_IEHW;
+else if svc_bas_cd = 86 then output mylib.import_IEF;
+else if (svc_bas_cd = 1 AND pkg_typ_cd NE 6 AND pkg_typ_cd NE 2) and ((shp_wgt_um_cd = 'K' and shp_wgt < 71) or (shp_wgt_um_cd = 'P' and shp_wgt < 155)) 
+	then output mylib.import_IP;
+else if (svc_bas_cd = 1 AND pkg_typ_cd NE 6 AND pkg_typ_cd NE 2) and ((shp_wgt_um_cd = 'K' and shp_wgt > 70) or (shp_wgt_um_cd = 'P' and shp_wgt > 154))
+	then output mylib.import_IPHW;
+else if svc_bas_cd = 70 then output mylib.import_IPF;
+else if (svc_bas_cd = 1 AND pkg_typ_cd = 6) then output mylib.import_IPL;
+else if (svc_bas_cd = 1 AND pkg_typ_cd = 2) then output mylib.import_IPPAK;
+else output temp;
+
+run;
+
+
+/* Getting Net revenue for Service by Country*/
+/*import_IE*/
+proc sql ;
+ create table mylib.IE_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IE
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IEHW*/
+proc sql ;
+ create table mylib.IEHW_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IEHW
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IEF*/
+proc sql ;
+ create table mylib.IEF_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IEF
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IP*/
+proc sql ;
+ create table mylib.IP_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IP
+ group by orig_ctry_cd, zone_code 
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IPHW*/
+proc sql ;
+ create table mylib.IPHW_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IPHW
+ group by orig_ctry_cd, zone_code 
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IPF*/
+proc sql ;
+ create table mylib.IPF_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IPF
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IPL*/
+proc sql ;
+ create table mylib.IPL_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IPL
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*import_IPPAK*/
+proc sql ;
+ create table mylib.IPPAK_Country as
+ select orig_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.import_IPPAK
+ group by orig_ctry_cd, zone_code
+ order by orig_ctry_cd, net_rev_amt
+;
+quit;
+
+/*removing duplicate zone from country list, if any*/
+
+data mylib.IE_Country;
+set mylib.IE_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib.IEHW_Country;
+set mylib.IEHW_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib.IEF_Country;
+set mylib.IEF_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib.IP_Country;
+set mylib.IP_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib.IPHW_Country;
+set mylib.IPHW_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib.IPF_Country;
+set mylib.IPF_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib.IPL_Country;
+set mylib.IPL_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+data mylib.IPPAK_Country;
+set mylib.IPPAK_Country;
+by orig_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) or last.orig_ctry_cd;
+	
+run;
+
+/*Joining import_data dataset with services data we obtained above. In case if you have updated dataset name "import_data", update the same in below code.*/
+
+proc sql ;
+ create table mylib.import_ie_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ie,
+		(id.ie*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IE_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_iehw_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.iehw,
+		(id.iehw*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IEHW_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ief_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ief,
+		(id.ief*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IEF_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ip_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ip,
+		(id.ip*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IP_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_iphw_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.iphw,
+		(id.iphw*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IPHW_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ipf_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ipf,
+		(id.ipf*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IPF_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ipl_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ipl,
+		(id.ipl*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IPL_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ippak_disc as
+ select ic.orig_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		id.ippak,
+		(id.ippak*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.IPPAK_Country ic
+ left join  mylib.import_data id
+ on ic.orig_ctry_cd = id.origin
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+/*Below set of code will give import discounts for services by zone for country selected. */
+
+proc sql ;
+ create table mylib.import_ie_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_ie_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_iehw_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_iehw_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ief_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_ief_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ip_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_ip_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_iphw_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_iphw_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ipf_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_ipf_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ipl_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_ipl_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.import_ippak_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.import_ippak_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+/* *************************************************************************************** */
+/* *********************Code for G3P****************************************************** */
+/* *************************************************************************************** */
+/* *************************************************************************************** */
+/* *************************************************************************************** */
+
+/*From APAC (inbound) fast approval matrix.xls file, filter Type as G3P, and Origin and Destination not to country code for which G3P shipments records are needed. After applying these filters, convert the resultant raw data to SAS dataset and name it "g3p_data". You may update the SAS dataset name "g3p_data", but make sure you update the same in this program. Data in "g3p_data" dataset will be different for different country.*/
+
+
+/*Get G3P data*/
+proc sql ;
+connect to teradata as ish ( user="&ish_user" password="&ish_pw" tdpid='edwapps.prod.fedex.com' );
+
+ create table mylib.g3P_intl_shipment as select * from connection to ish
+ (
+SELECT orig_ctry_cd, dest_ctry_cd, svc_bas_cd, pkg_typ_cd, net_rev_amt, substr(fgt_tbl_nbr, character(fgt_tbl_nbr)+0) as zone_code, shp_wgt, shp_wgt_um_cd
+FROM	ui_ish_prod_db.intl_shipment
+where   orig_ctry_cd <> 'country_code'							/*enter country code for which import shipments needed ex: MY*/	
+and payr_ctry_cd = 'country_code'								/*enter country code for which import shipments needed ex: MY*/	
+and dest_ctry_cd <> 'country_code'								/*enter country code for which import shipments needed ex: MY*/	
+and shp_dt_yyyymm between '201411' and '201510'					/*enter time period as required*/
+and substr(fgt_tbl_nbr, character(fgt_tbl_nbr)+0) <> ''
+and substr(fgt_tbl_nbr, 1, 2) = 'rate_scale_code' 							/*enter the ratescale code depending on county*/	
+ 
+   );
+ disconnect from ish;
+
+ /*Assumption - shipments with weight above 155 for LB. 71 for KG are considered HW for IE and IP */
+ /*Creating dataset for each service - g3p shipments*/ 
+ 
+  data mylib.g3P_IE mylib.g3P_IEHW mylib.g3P_IEF mylib.g3P_IP mylib.g3p_IPHW mylib.g3P_IPF mylib.g3P_IPL mylib.g3P_IPPAK temp;
+set mylib.g3P_intl_shipment;
+
+if svc_bas_cd = 4 or svc_bas_cd = 3 and ((shp_wgt_um_cd = 'K' and shp_wgt < 71) or (shp_wgt_um_cd = 'P' and shp_wgt < 155))
+	then output mylib.g3P_IE;
+else if svc_bas_cd = 4 or svc_bas_cd = 3 and ((shp_wgt_um_cd = 'K' and shp_wgt > 70) or (shp_wgt_um_cd = 'P' and shp_wgt > 154)) 
+	then output mylib.g3P_IEHW;
+else if svc_bas_cd = 86 then output mylib.g3P_IEF;
+else if (svc_bas_cd = 1 AND pkg_typ_cd NE 6 AND pkg_typ_cd NE 2) and ((shp_wgt_um_cd = 'K' and shp_wgt < 71) or (shp_wgt_um_cd = 'P' and shp_wgt < 155)) 
+	then output mylib.g3P_IP;
+else if (svc_bas_cd = 1 AND pkg_typ_cd NE 6 AND pkg_typ_cd NE 2) and ((shp_wgt_um_cd = 'K' and shp_wgt > 70) or (shp_wgt_um_cd = 'P' and shp_wgt > 154))
+	then output mylib.g3p_IPHW;
+else if svc_bas_cd = 70 then output mylib.g3P_IPF;
+else if (svc_bas_cd = 1 AND pkg_typ_cd = 6) then output mylib.g3P_IPL;
+else if (svc_bas_cd = 1 AND pkg_typ_cd = 2) then output mylib.g3P_IPPAK;
+else output temp;
+
+run;
+
+
+
+/* Getting Net revenue for Service by Country*/
+/*G3P_IE*/
+proc sql ;
+ create table mylib.g3p_IE_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IE
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+/*G3P_IEHW*/
+proc sql ;
+ create table mylib.g3p_IEHW_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IEHW
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+/*g3p_IEF*/
+proc sql ;
+ create table mylib.g3p_IEF_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IEF
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+/*g3p_IP*/
+proc sql ;
+ create table mylib.g3p_IP_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IP
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+/*g3p_IPHW*/
+proc sql ;
+ create table mylib.g3p_IPHW_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IPHW
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+/*g3p_IPF*/
+proc sql ;
+ create table mylib.g3p_IPF_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IPF
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+/*g3p_IPL*/
+proc sql ;
+ create table mylib.g3p_IPL_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IPL
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+/*g3p_IPPAK*/
+proc sql ;
+ create table mylib.g3p_IPPAK_Country as
+ select orig_ctry_cd, dest_ctry_cd, zone_code,
+		sum(net_rev_amt) as net_rev_amt
+ from 
+ mylib.g3p_IPPAK
+ group by orig_ctry_cd, dest_ctry_cd, zone_code
+ order by orig_ctry_cd, dest_ctry_cd, zone_code, net_rev_amt
+;
+quit;
+
+
+/*removing duplicate zone from country list, if any*/
+
+data mylib.g3p_IE_Country;
+set mylib.g3p_IE_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+data mylib.g3p_IEHW_Country;
+set mylib.g3p_IEHW_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+data mylib.g3p_IEF_Country;
+set mylib.g3p_IEF_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+data mylib.g3p_IP_Country;
+set mylib.g3p_IP_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+data mylib.g3p_IPHW_Country;
+set mylib.g3p_IPHW_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+data mylib.g3p_IPF_Country;
+set mylib.g3p_IPF_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+data mylib.g3p_IPL_Country;
+set mylib.g3p_IPL_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+data mylib.g3p_IPPAK_Country;
+set mylib.g3p_IPPAK_Country;
+by orig_ctry_cd dest_ctry_cd;
+	if (first.orig_ctry_cd and last.orig_ctry_cd) and (first.dest_ctry_cd and last.dest_ctry_cd) or last.dest_ctry_cd;
+	
+run;
+
+/*Joining g3p_data dataset with services data we obtained above. In case if you have updated dataset name "g3p_data", update the same in below code.*/
+
+proc sql ;
+ create table mylib.g3p_ie_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.ie,.45) as ie,
+		(coalesce(id.ie,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IE_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_iehw_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.iehw,.45) as iehw,
+		(coalesce(id.iehw,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IEHW_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ief_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.ief,.45) as ief,
+		(coalesce(id.ief,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IEF_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ip_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.ip,.45) as ip,
+		(coalesce(id.ip,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IP_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_iphw_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.iphw,.45) as iphw,
+		(coalesce(id.iphw,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IPHW_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ipf_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.ipf,.45) as ipf,
+		(coalesce(id.ipf,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IPF_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ipl_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.ipl,.45) as ipl,
+		(coalesce(id.ipl,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IPL_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ippak_disc as
+ select ic.orig_ctry_cd, ic.dest_ctry_cd, ic.zone_code, ic.net_rev_amt,
+		sum(ic.net_rev_amt) as total_net_rev_amt,
+		(ic.net_rev_amt/sum(ic.net_rev_amt))*100 as net_rev_pct,
+		coalesce(id.ippak,.45) as ippak,
+		(coalesce(id.ippak,.45)*(ic.net_rev_amt/sum(ic.net_rev_amt))*100) as weighted_avg
+ from mylib.g3p_IPPAK_Country ic
+ left join  mylib.g3p_data id
+ on ic.orig_ctry_cd = id.origin
+ and ic.dest_ctry_cd = id.destination
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+/*Below set of code will give G3P discounts for services by zone for country selected. */
+
+proc sql ;
+ create table mylib.g3p_ie_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_ie_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_iehw_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_iehw_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ief_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_ief_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ip_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_ip_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_iphw_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_iphw_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ipf_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_ipf_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ipl_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_ipl_disc
+ group by zone_code
+ order by zone_code
+;
+quit;
+
+proc sql ;
+ create table mylib.g3p_ippak_disc_zone as
+ select zone_code, sum(weighted_avg) as proposed_disc
+ from mylib.g3p_ippak_disc
+ group by zone_code
+ order by zone_code
+;
+quit;

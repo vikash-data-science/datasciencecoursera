@@ -1,0 +1,301 @@
+******************************************************************************************;
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+******************************************************************************************;
+libname sasdata "/mktg/prcoe/data01/e5065575/eMBP/minimum_discount/Ver1"; /* CHANGE to your own directory */
+
+%let user1 = "EPRS_APP";
+%let pass = "frdQ0SrFTfqPSP12xmEfUuhkI";
+%let db =  "@ePRS_SVC1_L6";
+%let buf =  2000;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.transportation_service as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.transportation_service
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.service_group_geo_mbr as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.service_group_geo_mbr
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.prcng_geo_group_mbr as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.prcng_geo_group_mbr
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.eprs_country as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.country
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	create table sasdata.region_mdt_input as
+	select
+			a.*,
+			b.CNTRY_RATE_SCALE_SERIAL_NBR as ctry_num
+	from work.region_mdt_input a, sasdata.eprs_country b
+	where b.cntry_cd = a.country;
+quit;
+
+%macro fetch_mdtemplate(country,export,import,inbound,L3P,G3P,Domestic,r_count,ctry_num);
+	
+	/*** Declare values for macro variables ***/
+	%let reco = 7;
+	%let aemax = 6;
+	%let mgrmax = 4;
+	%let autopnl = 2;
+	%let MINIMUM_FORMAT_TYPE_CD = "F";
+	%let MODFY_FEDEX_ID_NBR = 5065575;
+	%let modify_dt = "4/20/2016";
+	
+	/*** Get list of applicable sub service groups ***/
+	%if &export = Y %then %let service1 = "Export";
+		%else %let service1 = "Null";
+	%if &import = Y %then %let service2 = "Import";
+		%else %let service2 = "Null";
+	%if &inbound = Y %then %let service3 = "Import";
+		%else %let service3 = "Null";
+	%if &L3P = Y %then %let service4 = "L3P";
+		%else %let service4 = "Null";
+	%if &G3P = Y %then %let service5 = "G3P";
+		%else %let service5 = "Null";
+	%if &Domestic = Y %then %let service6 = "IC";
+		%else %let service6 = "Null";
+	%let service7 = "IPD";
+	%let service8 = "IED";
+	%let service9 = "IDF";
+	
+	proc sql;
+		connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+		create table subsvc_grp_list as select * from connection to ora
+		(
+			select 	svc_grp_id,
+					svc_grp_vers_nbr,
+					svc_grp_nm,
+					svc_grp_type_cd,
+					rqst_type_cd
+			from ePRS_SCHEMA.service_group
+			where substr(svc_grp_id,1,length(svc_grp_id)-5) = %unquote(%str(%')&ctry_num.%str(%'))
+		); 
+		disconnect from ora;
+	quit;
+		
+	data sasdata.subsvc_grp_list;
+		set subsvc_grp_list;
+		where svc_grp_type_cd="SSG"
+			and (rqst_type_cd='M' or rqst_type_cd='B')
+			and (index(svc_grp_nm,&service1) > 0 or index(svc_grp_nm,&service2) > 0 or index(svc_grp_nm,&service3) > 0
+				or index(svc_grp_nm,&service4) > 0 or index(svc_grp_nm,&service5) > 0 or index(svc_grp_nm,&service6) > 0)
+			and (index(svc_grp_nm,&service7) eq 0 and index(svc_grp_nm,&service8) eq 0 and index(svc_grp_nm,&service9) eq 0);
+	run;
+	
+	data mdt_temp1;
+		set sasdata.subsvc_grp_list;
+		if (index(svc_grp_nm,&service1)) > 0 then service = &service1;
+		else if (index(svc_grp_nm,&service2)) > 0 then service = &service2;
+		else if (index(svc_grp_nm,&service3)) > 0 then service = &service3;
+		else if (index(svc_grp_nm,&service4)) > 0 then service = &service4;
+		else if (index(svc_grp_nm,&service5)) > 0 then service = &service5;
+		else if (index(svc_grp_nm,&service6)) > 0 then service = &service6;
+	run;
+	
+	/*** map rate scale group with sub service group ***/	
+	/*proc sql;
+		connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+		create table rs_temp1 as select * from connection to ora
+		(
+			select 	rate_scale_group_nbr,
+					rate_scale_group_nm
+			from ePRS_SCHEMA.rate_scale_group
+			where substr(rate_scale_group_nm,1,2) = %unquote(%str(%')&country.%str(%'))
+		);
+		disconnect from ora;
+	quit;		
+
+	data sasdata.rs_temp1;
+		set rs_temp1;
+		where index(rate_scale_group_nm,upcase(&service1)) > 0 or index(rate_scale_group_nm,upcase(&service2)) > 0
+		   or index(rate_scale_group_nm,upcase(&service5)) > 0 or index(rate_scale_group_nm,"INTRA COUNTRY") > 0;
+	run;
+	
+	%if &inbound = Y %then %let service3 = "Inbound";
+	%else %let service3 = "Null";
+
+	data rs_temp2;
+		set sasdata.rs_temp1;
+		if index(rate_scale_group_nm,upcase(&service1)) > 0 then service = &service1;
+		else if index(rate_scale_group_nm,upcase(&service2)) > 0 then service = &service2;
+		else if index(rate_scale_group_nm,upcase(&service3)) > 0 then service = &service3;
+		else if index(rate_scale_group_nm,upcase(&service4)) > 0 then service = &service4;
+		else if index(rate_scale_group_nm,upcase(&service5)) > 0 then service = &service5;
+		else if index(rate_scale_group_nm,"INTRA COUNTRY") > 0 then service = &service6;
+	run;
+
+	proc sql;
+		create table mdt_temp2 as
+		select 	a.*,
+				b.rate_scale_group_nbr
+		from mdt_temp1 a left join rs_temp2 b
+		on a.svc = b.svc;
+	quit;
+	
+	data mdt_temp3;
+		set mdt_temp2;
+		if rate_scale_group_nbr = '' then rate_scale_group_nbr = 'D';
+	run;
+	*/
+	/*** Map BDS numbers with service sub groups ***/
+	proc sql;
+		create table mdt_temp3 as
+		select 	a.*,
+				b.BDS_ID_NBR,
+				b.PRCNG_GEO_GRP_ID
+		from mdt_temp1 a left join sasdata.service_group_geo_mbr b
+		on a.svc_grp_id = b.svc_grp_id;
+	quit;
+	
+	/*** Extract the BDS and service information from transportation service table ***/
+	proc sql;
+		create table mdt_temp4 as
+		select a.*,
+				b.SVC_SHT_NM,
+				b.ORIG_CNTRY_CD,
+				b.DEST_CNTRY_CD,
+				b.BDS_VERS_NBR
+		from mdt_temp3 a left join sasdata.transportation_service b
+		on a.BDS_ID_NBR = b.BDS_ID_NBR;
+	quit;
+
+	/*** Extract zone information from prcng_geo_group_mbr table ***/
+	proc sql;
+		create table mdt_temp5 as
+		select a.*,
+				b.PRCNG_GEO_ID_NBR
+		from mdt_temp4 a left join sasdata.prcng_geo_group_mbr b
+		on a.PRCNG_GEO_GRP_ID = b.PRCNG_GEO_GRP_ID;
+	quit;
+	
+	/*** Prepare the minimum discount template ***/
+	proc sql;
+		create table mdtemplate1_&country as
+		select 
+			cat("&country.",upper(substr(service,1,2)),"FIX01") as TEMPLATE_ID,
+			SVC_GRP_ID,
+			SVC_GRP_NM,
+			SVC_GRP_VERS_NBR,
+			BDS_ID_NBR,
+			SVC_SHT_NM,
+			ORIG_CNTRY_CD,
+			DEST_CNTRY_CD,
+			BDS_VERS_NBR,
+			PRCNG_GEO_ID_NBR,
+			'D' as RATE_SCALE_GROUP_NBR,
+			&MINIMUM_FORMAT_TYPE_CD as MINIMUM_FORMAT_TYPE_CD,
+			0 as MIN_WGT,
+			&reco as RECMD_DISC_NBR,
+			&aemax as AE_MAX_DISC_NBR,
+			&mgrmax as MGR_MAX_DISC_NBR,
+			&autopnl as AUTO_PROFIT_LOSS_NBR,
+			&MODFY_FEDEX_ID_NBR as MODFY_FEDEX_ID_NBR,
+			&modify_dt as MODFY_DT
+		from mdt_temp5;
+	quit;
+	
+	%if &r_count = 1 %then %do;
+		data mdtemplate2_agg;
+			set mdtemplate1_&country;
+		run;
+	%end;
+	%else %do;
+		data mdtemplate2_agg;
+			set mdtemplate2_agg mdtemplate1_&country;
+		run;
+	%end;
+	
+%mend;
+	
+data sasdata.region_mdt_input;
+	set sasdata.region_mdt_input;
+	r_count = _n_;
+	call execute ('%fetch_mdtemplate('||country||','||export||',
+	'||import||','||inbound||','||L3P||','||G3P||','||Domestic||','||r_count||','||ctry_num||')');
+run;
+
+data sasdata.md_template;
+	set mdtemplate2_agg;
+	where 99 < PRCNG_GEO_ID_NBR < 300;
+run;
+
+proc sort data=sasdata.md_template out=sasdata.md_template_final;
+	by template_id svc_grp_id bds_id_nbr prcng_geo_id_nbr;
+run;
+
+proc sql;
+	connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+	create table sasdata.prcng_geo as select * from connection to ora 
+	(
+		select * from ePRS_SCHEMA.prcng_geo
+	);	
+	disconnect from ora;
+quit;
+
+proc sql;
+	create table mdt_temp6 as
+	select a.*,
+		b.prcng_geo_key_long_desc
+	from sasdata.md_template_final a left join sasdata.prcng_geo b
+	on a.prcng_geo_id_nbr = b.prcng_geo_id_nbr;
+quit;
+
+data mdt_temp7;
+	set mdt_temp6;
+	zone = substr(prcng_geo_key_long_desc,length(prcng_geo_key_long_desc),1);
+	if zone = 1 then zone = 'DA';
+run;
+
+data sasdata.eu_region_input;
+	set work.eu_region_input;
+run;
+
+proc sql;
+	create table sasdata.md_template_zone as
+	select a.*,
+		b.Custom_Fixed_Amt as minimum_amt
+	from mdt_temp7 a left join sasdata.eu_region_input b
+	on a.bds_id_nbr = b.bds_nbr
+	and a.zone = b.zone_code;
+quit;
+
+data sasdata.md_template_zone_final (drop=prcng_geo_key_long_desc minimum_amt);
+	set sasdata.md_template_zone;
+	where minimum_amt ne .;
+	RECMD_DISC_NBR = minimum_amt;
+	AE_MAX_DISC_NBR = minimum_amt;
+	MGR_MAX_DISC_NBR = minimum_amt;
+	AUTO_PROFIT_LOSS_NBR = minimum_amt;
+run;
+
+proc sort data=sasdata.md_template_zone_final;
+	by template_id;
+run;
+	
+
+
+
+

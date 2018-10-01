@@ -1,0 +1,42 @@
+/* Preparing dataset for e-miner */
+
+options nocenter ps=max mlogic mprint symbolgen;
+
+%macro eminer_prep(country,ssgname,ssg);
+	libname data_&country "/mktg/prcoe/data06/eMBP_Segmentation/APAC/&country./data/EDA";
+	libname op_&country "/mktg/prcoe/data06/EMINER";
+	
+	proc sql;
+		create table op_&country..&country._eminer_&ssgname._1 as
+		select 
+			a.post_gross,
+			a.comb2,
+			b.cpra_cd,
+			b.reg_stop_flg,
+			b.auto_aff,
+			b.tender_aff,
+			b.acct_age_mth,
+			b.age_mth,
+			c.*
+		from data_&country..proposal_all_rev_scheme1 a
+		left join data_&country..proposal_all b
+			on a.proposal_nbr = b.proposal_nbr
+		left join data_&country..proposal_rf c
+			on a.proposal_nbr = c.proposal_nbr
+		where a.comb2 = "&ssg.";
+	quit;
+%mend;
+
+%eminer_prep(JP,EXP,EXP);
+%eminer_prep(JP,EXP_IMP,EXP^IMP);
+%eminer_prep(KR,EXP,EXP);
+%eminer_prep(KR,IMP,IMP);
+%eminer_prep(KR,EXP_IMP,EXP^IMP);
+%eminer_prep(SG,EXP,EXP);
+%eminer_prep(SG,EXP_IMP,EXP^IMP);
+
+
+
+
+			
+	

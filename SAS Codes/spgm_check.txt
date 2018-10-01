@@ -1,0 +1,93 @@
+******************************************************************************************;
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+******************************************************************************************;
+
+/*** CHANGE to your own directory ***/
+libname sasdata "/mktg/prcoe/data01/e5065575/Special_Program"; 
+
+/*** Below are ePRS environment credentials. UPDATE these credentials depending on where the special program is created (in ePRS Test or ePRS Production) ***/
+%let user1 = "EPRS_APP";
+%let pass = "frdQ0SrFTfqPSP12xmEfUuhkI";
+%let db =  "@ePRS_SVC1_L3";
+%let buf =  2000;
+
+/*** Macro definition which takes name of special program as input argument ***/
+%macro spgm_check(pgm_nm);
+	
+	/*** SQL query to make a copy of the program table which contains index of all programs created so far ***/
+	proc sql;
+		connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+		create table cute1 as select * from connection to ora 
+		(	
+			select * from program
+		);
+		disconnect from ora;
+	quit;
+
+	/*** Assigns internal program ID to a macro variable corresponding to the special program name ***/
+	data _null_;
+		set cute1;
+		where program_nm = &pgm_nm. ;
+		call symput('pgm_id',program_id);
+	run;
+
+	%put &pgm_id;
+
+	/*** SQL query to fetch all master data pertaining to the required special program ***/
+	proc sql;
+		connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+		create table sasdata.spgm_data1 as select * from connection to ora 
+		(
+			select distinct
+				a.program_nm,
+				a.program_desc,
+				a.program_type_cd,
+				a.max_disc_override_flg,
+				a.disc_type_cd,
+				a.disc_option_cd,
+				a.disc_apply_cd,
+				a.modfy_dt,
+				a.create_dt,
+				a.program_id,
+				b.program_svc_group_id,
+				c.rate_scale_group_nbr,
+				b.svc_grp_id,
+				d.svc_grp_nm,
+				b.bds_id_nbr,
+				e.svc_sht_nm,
+				c.begin_range_txt,
+				c.end_range_txt,
+				c.prcng_geo_id_nbr,
+				f.prcng_geo_key_desc,
+				c.recmd_disc_pct
+				from program a, program_service_group b, program_vol_dscnt c, service_group d, transportation_service e, prcng_geo f
+				where a.program_id = b.program_id and b.program_svc_group_id=c.program_svc_group_id and a.program_id=&pgm_id.
+				      and b.svc_grp_id=d.svc_grp_id and b.bds_id_nbr=e.bds_id_nbr and c.prcng_geo_id_nbr=f.prcng_geo_id_nbr
+				order by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20
+		);	
+		disconnect from ora;
+	quit;
+
+	/*** Only keeps attributes which are to be shown in the output format ***/
+	data sasdata.spgm_data2;
+		set sasdata.spgm_data1 (keep=program_nm svc_grp_nm svc_sht_nm begin_range_txt end_range_txt prcng_geo_key_desc recmd_disc_pct);
+		format recmd_disc_pct 3.;
+	run;
+
+	/*** Sorts data to prepare dataset for transpose in order to get the cross-tabulation of zone with the other attributes ***/
+	proc sort data=sasdata.spgm_data2 out=sort1;
+		by program_nm svc_grp_nm svc_sht_nm begin_range_txt end_range_txt prcng_geo_key_desc;
+	run;
+
+	/*** Transpose to generate an output format almost similar to the recommendation table view seen in ePRS on recommendation screen. ***/
+	proc transpose data=sort1 out=sasdata.spgm_data3 (drop=_name_ _label_);
+		by program_nm svc_grp_nm svc_sht_nm begin_range_txt end_range_txt;
+		id prcng_geo_key_desc;
+		var recmd_disc_pct;
+	run;
+%mend;
+/*** End of macro definition ***/
+
+/*** Invoking the macro with the name of the special program as input argument. ENTER the Name of the Special Program that you want to validate. ***/
+%spgm_check("ES ES iPFS Band 01 Intl EUR 1500")
+/*** Dataset spgm_data3 is the end output which you can export in excel for further validations ***/

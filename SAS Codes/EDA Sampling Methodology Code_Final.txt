@@ -1,0 +1,232 @@
+libname user1 '/mktg/prcoe/data01/e5065575/vikash';
+
+OPTIONS symbolgen MSTORED mlogic merror serror sasmstore=user1;
+%passwd;
+
+
+/***** START ----- Extract Monthly Data - Group By Variables, Revenue and Weight *****/
+
+%macro shpmt_month (month);
+	proc sql;
+		&connect.;
+	    create table user1.shp_&month as select * from connection to teradata
+	      (
+	        SELECT
+	a.payr_cust_nm AS Payor_acct_name,
+	a.payr_nat_acct_nbr  AS Natl_acct_number ,
+	a.payr_cust_nbr AS Payor_cust_number,  
+	a.payr_ctry_cd AS Payor_Cntry, 
+
+	a.orig_div_cd AS Orig_Region,  
+	a.orig_ctry_cd AS Orig_Cntry, 
+	a.dest_ctry_cd AS Dest_Cntry,
+	&month as MON_YYYYMM, 
+
+	SUM(net_rev_amt) AS REVENUE,
+	SUM(net_rev_amt - fuel_srchg_amt-res_srchg_amt-sphnd_wo_fuel_res_amt) AS REV_noSCHG,
+	sum(shp_rate_wgt_lbs) AS Rated_Weight,
+	sum(shp_wgt_lbs) AS Ship_Weight
+
+	FROM gplp_cost_prod_view_db.gplp_express_shp_cost a
+
+	WHERE shp_rate_yyyymm in (&month)
+
+	Group by 1,2,3,4,5,6,7,8);
+	disconnect from teradata;
+	quit;
+%mend shpmt_month;
+
+%shpmt_month(201404);
+%shpmt_month(201405);
+%shpmt_month(201406);
+%shpmt_month(201407);
+%shpmt_month(201408);
+%shpmt_month(201409);
+%shpmt_month(201410);
+%shpmt_month(201411);
+%shpmt_month(201412);
+%shpmt_month(201501);
+%shpmt_month(201502);
+%shpmt_month(201503);
+
+/***** END ----- Extract Monthly Data - Group By Variables, Revenue and Weight *****/
+
+
+/***** START ----- Aggregate Annual Data - Group By Variables, Revenue and Weight *****/
+
+data user1.shp_2014_15;
+	set user1.shp_201404
+		user1.shp_201405
+		user1.shp_201406
+		user1.shp_201407
+		user1.shp_201408
+		user1.shp_201409
+		user1.shp_201410
+		user1.shp_201411
+		user1.shp_201412
+		user1.shp_201501
+		user1.shp_201502
+		user1.shp_201503;
+run;
+
+/***** END ----- Aggregate Annual Data - Group By Variables, Revenue and Weight *****/
+
+
+/***** START ----- Summarize Annual Data - Group By Variables, Revenue and Weight *****/
+
+proc sql;
+	create table user1.shp_sum as
+	select
+	Payor_acct_name,
+	Natl_acct_number ,
+	Payor_cust_number,  
+	Payor_Cntry, 
+	Orig_Region,  
+	Orig_Cntry, 
+	Dest_Cntry,	
+	SUM(REVENUE) AS REVENUE,
+	SUM(REV_noSCHG) AS REV_noSCHG,
+	sum(Rated_Weight) AS Rated_Weight,
+	sum(Ship_Weight) AS Ship_Weight
+
+	from user1.shp_2014_15
+	where payor_cust_number ne 0
+	group by 1,2,3,4,5,6,7;
+quit;
+
+/***** END ----- Summarize Annual Data - Group By Variables, Revenue and Weight *****/
+
+
+/***** START ----- Choosing Sample Variables based on Random Sampling of Variable Strata *****/
+
+%macro strata_rs_sample (start_strata,end_strata,no_strata,n_per_strata,samplevar,rankvar);
+	proc sql;
+		create table user1.shp_sum_desc as
+		select
+			&samplevar,
+			sum(&rankvar) as &rankvar
+		from user1.shp_sum
+		where &samplevar ne 0
+		group by 1
+		order by 2 desc;
+	quit;
+
+	proc rank data=user1.shp_sum_desc out=user1.shp_sum_rank groups=&no_strata;
+ 		var &rankvar;
+		ranks &rankvar._Rank;
+	run;
+
+	%do i = 1 %to &no_strata;
+		data shp_&i;
+			set user1.shp_sum_rank;
+			where &rankvar._Rank = &i-1;
+		run;
+		
+		proc surveyselect data = shp_&i 
+			method = SRS n = &n_per_strata out = shp_sample&i;
+		run;
+	%end;
+%mend strata_rs_sample;
+
+%strata_rs_sample (1,25,100,5,Natl_acct_number,Rev_noSCHG);
+%strata_rs_sample (26,50,100,5,Natl_acct_number,Rev_noSCHG);
+%strata_rs_sample (51,75,100,5,Natl_acct_number,Rev_noSCHG);
+%strata_rs_sample (76,100,100,5,Natl_acct_number,Rev_noSCHG);
+
+%macro do_list (no_strata);
+	%do i = 1 %to &no_strata;
+		shp_sample&i
+	%end;
+%mend do_list;
+
+data user1.shp_strata_sample;
+	set %do_list(100);
+run;
+
+/***** END ----- Choosing Sample Variables based on Random Sampling of Variable Strata *****/
+
+
+/***** START ----- Extract One Month Data for Chosen Sample Variables - Group By Variables, Revenue and Weight *****/
+
+%macro sample_data (month,varname,input_ds,output_ds);
+
+proc sql;
+   select distinct &varname
+      into :var_value separated by ', '
+      from user1.&input_ds;
+quit;
+
+proc sql;
+	&connect.;
+	create table user1.&output_ds as select * from connection to teradata
+   	(
+	SELECT 
+	payr_cust_nm AS Payor_acct_name, 
+	payr_nat_acct_nbr AS Natl_acct_number,
+	payr_cust_nbr AS Payor_cust_number,  
+	payr_ctry_cd AS Payor_Cntry, 
+	shp_rate_yyyymm AS Ship_Rate_Month,
+	orig_div_cd AS Orig_Region,  
+	orig_ctry_cd AS Orig_Cntry, 
+	dest_ctry_cd AS Dest_Cntry, 
+	shp_dt AS Ship_Date,
+
+	net_rev_amt AS REVENUE,
+	net_rev_amt - fuel_srchg_amt - res_srchg_amt - sphnd_wo_fuel_res_amt AS REV_noSCHG,
+	fuel_srchg_amt as FSC,
+	res_srchg_amt + sphnd_wo_fuel_res_amt AS SRCHG,
+	shp_disc_amt AS DISCOUNT,
+	REV_noSCHG + DISCOUNT AS Gross_Revenue,
+
+	shp_rate_wgt_lbs AS Rated_Weight,
+	shp_wgt_lbs AS Ship_Weight,
+
+	shp_pce_qty  AS PKG_CNT ,    
+	shp_cnt AS SHP_CNT , 
+	net_cost_amt AS Total_Expense , 
+
+	CASE WHEN shp_pce_qty > 1 THEN 'Y' ELSE 'N' END AS Multiple
+
+	FROM gplp_cost_prod_view_db.gplp_express_shp_cost
+
+	WHERE shp_rate_yyyymm in (&month)
+	AND &varname in (&var_value)
+      	);
+	
+	disconnect from teradata;
+quit;
+%mend sample_data;
+
+%sample_data(201503,natl_acct_number,shp_strata_sample,dim_edasample2);
+
+/***** END ----- Extract One Month Data for Chosen Sample Variables - Group By Variables, Revenue and Weight *****/
+
+
+/***** START ----- Choosing Sample Variables based on Revenue *****/
+
+%macro sortbyrev (varname,segment,segvalue,no_customers);
+	proc sql outobs=&no_customers;
+		create table user1.sortbyrev_&varname as
+		select
+				&varname,
+				&segment,
+				sum(REV_noSCHG) as Rev_noSCHG,
+				sum(Rated_Weight) as Rated_Weight				
+		from user1.shp_sum
+		where &varname ne 0 and
+		&segment in (&segvalue)
+		group by 1,2
+		order by 3 desc;
+	quit;
+%mend sortbyrev;
+
+%sortbyrev(Natl_acct_number,"","",5);
+
+/***** END ----- Choosing Sample Variables based on Revenue *****/
+
+
+/***** START ----- Extract One Month Data for Chosen Sample Variables - Group By Variables, Revenue and Weight *****/
+
+%sample_data(201503,natl_acct_number,sortbyrev_natl_acct_number,dim_edasample1);
+
+/***** END ----- Extract One Month Data for Chosen Sample Variables - Group By Variables, Revenue and Weight *****/

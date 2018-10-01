@@ -1,0 +1,99 @@
+******************************************************************************************;
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+******************************************************************************************;
+
+libname sasdata "/mktg/prcoe/data01/e5065575/eMBP/PTO/"; /* CHANGE to your own directory */
+
+data sasdata.country_list;
+	set country_list;
+run;
+
+%macro cp_file(ctry);
+	libname saspath "/mktg/prcoe/data01/e5065575/eMBP/PTO/";
+	data saspath.modelsdesc_&ctry.;
+		set modelsdesc_&ctry.;
+	run;
+%mend;
+
+data sasdata.country_list;
+	set sasdata.country_list;
+	call execute ('%cp_file('||country||')');
+run;
+
+%macro run_validation(ctry);
+	libname saspath "/mktg/prcoe/data01/e5065575/eMBP/PTO/";
+	
+	data ds1_&ctry;
+		set saspath.modelsdesc_&ctry. (keep=model_description);
+		where index(model_description," EXPT ") > 0 or 
+			  index(model_description," IMPT ") > 0 or 
+			  index(model_description," INBD ") > 0 or 
+			  index(model_description," G3P ") > 0 or
+			  index(model_description," L3P ") > 0;
+	run;
+	
+	data set1_&ctry;
+		set ds1_&ctry;
+		where index(model_description," PL ") > 0 or 
+			  index(model_description," PO ") > 0 or 
+			  index(model_description," PK ") > 0;
+	run;
+
+	data set2_&ctry;
+		set ds1_&ctry;
+		where index(model_description," PLN ") > 0 or 
+			  index(model_description," PON ") > 0 or 
+			  index(model_description," PKN ") > 0;
+	run;
+	
+	data set3_&ctry;
+		set set2_&ctry;
+		length model_desc_new $42;
+		if index(model_description," PLN ") > 0 then model_desc_new = tranwrd(model_description,"PLN","PL");
+		else if index(model_description," PON ") > 0 then model_desc_new = tranwrd(model_description,"PON","PO");
+		else if index(model_description," PKN ") > 0 then model_desc_new = tranwrd(model_description,"PKN","PK");
+	run;
+	
+	proc sort data = set1_&ctry;
+		by model_description;
+	run;
+	
+	data set1_&ctry;
+		set set1_&ctry;
+		id = _n_;
+	run;
+	
+	proc sort data = set3_&ctry;
+		by model_desc_new;
+	run;
+	
+	data set3_&ctry;
+		set set3_&ctry;
+		id = _n_;
+	run;
+
+	proc sql;
+		create table set5_&ctry as
+		select a.*,
+			   b.model_desc_new
+		from set1_&ctry a left join set3_&ctry b
+		on a.id = b.id;
+	quit;
+	
+	data set_sum1_&ctry;
+		set set5_&ctry;
+		length status $5;
+		if model_description = model_desc_new then status = "TRUE";
+		else status = "FALSE";
+	run;
+	
+	data set_sum2_&ctry;
+		set set_sum1_&ctry;
+		where status = "FALSE";
+	run;
+%mend;
+	
+data sasdata.country_list;
+	set sasdata.country_list;
+	call execute ('%run_validation('||country||')');
+run;	

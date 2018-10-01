@@ -1,0 +1,53 @@
+options pagesize=1000 nocenter ps=max obs=max;
+libname mydata '/mktg/prcoe/data01/e5084708/Template_Compare/Data';
+
+%macro driver;
+%let user1 = "EPRS_APP";
+%let pass = "frdQ0SrFTfqPSP12xmEfUuhkI";
+%let db =  "@ePRS_SVC1_L6C"; /* CHANGE */
+%let buf =  2000;
+
+%if %sysfunc(exist(mydata.temp_1)) %then %do;		
+	proc delete data = mydata.temp_1;				
+%end;
+%if %sysfunc(exist(mydata.temp_2)) %then %do;		
+	proc delete data = mydata.temp_2;				
+%end;
+
+%compare_volume_template('AE02BG0320170606A0','12-Jun-17','AE02BG0320170522A0','22-May-17'); /* CHANGE */
+
+%mend;
+
+%macro compare_volume_template(template_set_id_1,template_gen_dt_1,template_set_id_2,template_gen_dt_2);
+proc sql;
+    connect to oracle as ora (user=&user1 orapw=&pass path=&db buffsize= &buf);
+    create table mydata.temp_1 as select * from connection to ora 
+	(
+		select * from eprs_schema.volume_discount_template where disc_template_id in
+		(select disc_template_id from eprs_schema.template where template_set_id = &template_set_id_1 AND to_date(gen_dt,'DD-MON-YY') = to_date(&template_gen_dt_1,'DD-MON-YY'))
+		order by 2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22
+	);
+	create table mydata.temp_2 as select * from connection to ora 
+	(
+		select * from eprs_schema.volume_discount_template where disc_template_id in
+		(select disc_template_id from eprs_schema.template where template_set_id = &template_set_id_2 AND to_date(gen_dt,'DD-MON-YY') = to_date(&template_gen_dt_2,'DD-MON-YY'))
+		order by 2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22
+	);
+	disconnect from ora;
+quit;
+
+data mydata.temp_1(DROP=disc_template_id);
+set mydata.temp_1;
+run;
+
+data mydata.temp_2(DROP=disc_template_id);
+set mydata.temp_2;
+run;
+
+proc compare base=mydata.temp_1 compare=mydata.temp_2
+             out=mydata.result outnoequal outbase outcomp outdif;
+run;
+
+%mend;
+
+%driver

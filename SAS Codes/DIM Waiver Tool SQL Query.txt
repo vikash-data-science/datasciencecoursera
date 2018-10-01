@@ -1,0 +1,20 @@
+SELECT
+a.payr_cust_nm AS Payor_acct_name,
+a.payr_nat_acct_nbr  AS Natl_acct_number ,
+a.payr_cust_nbr AS Payor_cust_number,  
+a.payr_ctry_cd AS Payor_Cntry, 
+a.shp_rate_yyyymm AS Ship_Rate_Date,
+a.orig_div_cd AS Orig_Region,  
+a.orig_ctry_cd AS Orig_Cntry, 
+a.dest_ctry_cd AS Dest_Cntry,
+a.prod_cd as prod_cd, 
+SUM(net_rev_amt) AS REVENUE,
+SUM(net_rev_amt - fuel_srchg_amt-res_srchg_amt-sphnd_wo_fuel_res_amt) AS REV_noSCHG,
+SUM(shp_rate_wgt_lbs) AS Rated_Weight,
+SUM(shp_wgt_lbs) AS Ship_Weight
+
+FROM gplp_cost_prod_view_db.gplp_express_shp_cost a
+
+WHERE shp_rate_yyyymm BETWEEN '201404' AND '201503'
+aND a.payr_nat_acct_nbr  IN (9989)
+Group by 1,2,3,4,5,6,7,8);

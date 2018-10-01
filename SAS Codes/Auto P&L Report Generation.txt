@@ -1,0 +1,35 @@
+%macro output (ctry,ds1,ds2,ds3,ds4,ds5,ds6);
+	libname mylib&ctry "/mktg/prcoe/data01/e5065575/Fast_Approval_APAC/Import_v2/&ctry.";
+	ods tagsets.ExcelXP path="/mktg/prcoe/data01/e5065575/Fast_Approval_APAC/Import_v2/Output_Files" file="Import_disc_&ctry..xml";
+	quit;
+	%do i = 1 %to 6;
+		proc sql;
+			create table &&ds&i as
+			select zone_code,
+				proposed_disc as proposed_disc_pct format=6.2
+			from mylib&ctry..&&ds&i;
+		quit;
+		
+		ods tagsets.ExcelXP options(sheet_name="&&ds&i");
+			proc print data=&&ds&i label noobs style(Header)=[just=center];
+				var zone_code proposed_disc_pct;
+			run;
+		quit;
+	%end;
+%mend;
+
+%output(TW,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(AU,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(CN,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(GU,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(HK,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(ID,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(JP,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(KR,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(MO,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(MY,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(NZ,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(PH,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(SG,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(TH,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);
+%output(VN,import_ie_disc_zone,import_ief_disc_zone,import_ip_disc_zone,import_ipf_disc_zone,import_ipl_disc_zone,import_ippak_disc_zone);

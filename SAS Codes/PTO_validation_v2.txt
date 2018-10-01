@@ -1,0 +1,81 @@
+******************************************************************************************;
+options nocenter ps=max mlogic mprint mstored sasmstore=macros missing=' ';
+******************************************************************************************;
+
+libname sasdata "/mktg/prcoe/data01/e5065575/eMBP/PTO/"; /* CHANGE to your own directory */
+
+data sasdata.country_list;
+	set country_list;
+run;
+
+%macro cp_file(ctry);
+	libname saspath "/mktg/prcoe/data01/e5065575/eMBP/PTO/";
+	data saspath.modelsdesc_&ctry.;
+		set modelsdesc_&ctry.;
+	run;
+%mend;
+
+data sasdata.country_list;
+	set sasdata.country_list;
+	call execute ('%cp_file('||country||')');
+run;
+
+%macro run_validation(ctry);
+	libname saspath "/mktg/prcoe/data01/e5065575/eMBP/PTO/";
+	
+	proc sql;
+	create table ds1_&ctry as
+		select model_description as model_desc
+		from saspath.modelsdesc_&ctry
+		where model_description contains ' PL '
+		   or model_description contains ' PO '
+		   or model_description contains ' PK ';
+	quit;
+	
+	proc sql;
+	create table ds2_&ctry as
+		select model_description as model_desc
+		from saspath.modelsdesc_&ctry
+		where model_description contains ' PLN '
+		   or model_description contains ' PON '
+		   or model_description contains ' PKN ';
+	quit;	
+		
+	data ds3_&ctry;
+		set ds2_&ctry;
+		length model_desc_new $42;
+		if index(model_desc," PLN ") > 0 then model_desc_new = tranwrd(model_desc,"PLN","PL");
+		else if index(model_desc," PON ") > 0 then model_desc_new = tranwrd(model_desc,"PON","PO");
+		else if index(model_desc," PKN ") > 0 then model_desc_new = tranwrd(model_desc,"PKN","PK");
+	run;
+	
+	proc sql;
+		create table ds_sum1_&ctry as
+		select a.model_desc,
+			   case when missing(b.model_desc_new) then 'FALSE' else 'TRUE' end as status
+		from ds1_&ctry a left join ds3_&ctry b
+		on a.model_desc = b.model_desc_new;
+	quit;
+	
+	proc sql;
+		create table ds_sum2_&ctry as
+		select status,
+			count (status) as status_count
+		from ds_sum1_&ctry
+		group by 1;
+	quit;
+		
+	ods tagsets.ExcelXP options(sheet_name="&&ctry");
+		proc print data=ds_sum2_&ctry label noobs style(Header)=[just=center];
+			var status status_count;
+		run;
+	quit;
+%mend;
+
+ods tagsets.ExcelXP path="/mktg/prcoe/data01/e5065575/eMBP/PTO/" file="validation_result.xml";
+quit;	
+
+data sasdata.country_list;
+	set sasdata.country_list;
+	call execute ('%run_validation('||country||')');
+run;	
